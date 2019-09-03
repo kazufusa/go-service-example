@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -57,6 +58,22 @@ func installService(name, desc string) error {
 		return err
 	}
 	defer s.Close()
+	s.SetRecoveryActions(
+		[]mgr.RecoveryAction{
+			mgr.RecoveryAction{
+				Type:  mgr.ServiceRestart,
+				Delay: 1 * time.Minute,
+			},
+			mgr.RecoveryAction{
+				Type:  mgr.ServiceRestart,
+				Delay: 1 * time.Minute,
+			},
+			mgr.RecoveryAction{
+				Type:  mgr.ServiceRestart,
+				Delay: 1 * time.Minute,
+			},
+		}, 0,
+	)
 	err = eventlog.InstallAsEventCreate(name, eventlog.Error|eventlog.Warning|eventlog.Info)
 	if err != nil {
 		s.Delete()
