@@ -3,35 +3,36 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/debug"
 	"golang.org/x/sys/windows/svc/eventlog"
 )
 
-var elog debug.Log
+var elog Log
 
 var _ svc.Handler = (*myservice)(nil)
 
-type myservice struct{}
+type myservice struct {
+	feature Feature
+}
 
 func (m *myservice) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPauseAndContinue
 	changes <- svc.Status{State: svc.StartPending}
-	fasttick := time.Tick(500 * time.Millisecond)
-	slowtick := time.Tick(2 * time.Second)
-	tick := fasttick
+
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 	elog.Info(1, strings.Join(args, "-"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	chContinue, chPause := m.feature.Start(ctx)
+
 loop:
 	for {
 		select {
-		case <-tick:
-			beep()
-			elog.Info(1, "beep")
 		case c := <-r:
 			switch c.Cmd {
 			case svc.Interrogate:
@@ -40,13 +41,14 @@ loop:
 				testOutput := strings.Join(args, "-")
 				testOutput += fmt.Sprintf("-%d", c.Context)
 				elog.Info(1, testOutput)
+				cancel()
 				break loop
 			case svc.Pause:
 				changes <- svc.Status{State: svc.Paused, Accepts: cmdsAccepted}
-				tick = slowtick
+				chPause <- struct{}{}
 			case svc.Continue:
 				changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
-				tick = fasttick
+				chContinue <- struct{}{}
 			default:
 				elog.Error(1, fmt.Sprintf("unexpected control request #%d", c))
 			}
@@ -73,7 +75,7 @@ func runService(name string, isDebug bool) {
 	if isDebug {
 		run = debug.Run
 	}
-	err = run(name, &myservice{})
+	err = run(name, &myservice{feature: Feature{elog: elog}})
 	if err != nil {
 		elog.Error(1, fmt.Sprintf("%s service failed: %v", name, err))
 		return
