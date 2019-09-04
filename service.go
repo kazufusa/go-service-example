@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kazufusa/go-service-example/llog"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/debug"
-	"golang.org/x/sys/windows/svc/eventlog"
 )
 
-var elog Log
+var elog *llog.Logger
 
 var _ svc.Handler = (*myservice)(nil)
 
@@ -25,7 +25,7 @@ func (m *myservice) Execute(args []string, r <-chan svc.ChangeRequest, changes c
 	changes <- svc.Status{State: svc.StartPending}
 
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
-	elog.Info(1, strings.Join(args, "-"))
+	elog.Info(strings.Join(args, "-"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	chContinue, chPause := m.feature.Start(ctx)
@@ -40,7 +40,7 @@ loop:
 			case svc.Stop, svc.Shutdown:
 				testOutput := strings.Join(args, "-")
 				testOutput += fmt.Sprintf("-%d", c.Context)
-				elog.Info(1, testOutput)
+				elog.Info(testOutput)
 				cancel()
 				break loop
 			case svc.Pause:
@@ -50,7 +50,7 @@ loop:
 				changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 				chContinue <- struct{}{}
 			default:
-				elog.Error(1, fmt.Sprintf("unexpected control request #%d", c))
+				elog.Error(fmt.Sprintf("unexpected control request #%d", c))
 			}
 		}
 	}
@@ -60,25 +60,26 @@ loop:
 
 func runService(name string, isDebug bool) {
 	var err error
-	if isDebug {
-		elog = debug.New(name)
-	} else {
-		elog, err = eventlog.Open(name)
+
+	elog = llog.NewLogger()
+	if !isDebug {
+		wslg, err := llog.NewWinServiceLogger(name)
 		if err != nil {
 			return
 		}
+		defer wslg.Close()
+		elog.SetWinServiceLogger(wslg)
 	}
-	defer elog.Close()
 
-	elog.Info(1, fmt.Sprintf("starting %s service", name))
+	elog.Info(fmt.Sprintf("starting %s service", name))
 	run := svc.Run
 	if isDebug {
 		run = debug.Run
 	}
 	err = run(name, &myservice{feature: Feature{elog: elog}})
 	if err != nil {
-		elog.Error(1, fmt.Sprintf("%s service failed: %v", name, err))
+		elog.Error(fmt.Sprintf("%s service failed: %v", name, err))
 		return
 	}
-	elog.Info(1, fmt.Sprintf("%s service stopped", name))
+	elog.Info(fmt.Sprintf("%s service stopped", name))
 }

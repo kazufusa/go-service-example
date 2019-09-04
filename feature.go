@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"time"
+
+	"github.com/kazufusa/go-service-example/llog"
 )
 
 type Feature struct {
-	elog Log
+	elog *llog.Logger
 }
 
 func (f *Feature) Start(ctx context.Context) (chContinue, chPause chan struct{}) {
@@ -27,7 +29,7 @@ func (f *Feature) Start(ctx context.Context) (chContinue, chPause chan struct{})
 			select {
 			case <-tick:
 				beep()
-				f.elog.Info(1, "beep")
+				f.elog.Info("beep")
 			case <-chContinue:
 				tick = fasttick
 			case <-chPause:

@@ -1,6 +1,6 @@
-package main
+package llog
 
-type Log interface {
+type IWinServiceLogger interface {
 	Close() error
 	Info(eid uint32, msg string) error
 	Warning(eid uint32, msg string) error
