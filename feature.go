@@ -13,6 +13,13 @@ type Feature struct {
 	websrv *http.Server
 }
 
+type IFeature interface {
+	Start()
+	Shutdown(context.Context)
+}
+
+var _ IFeature = (*Feature)(nil)
+
 func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hello, World")
 }
