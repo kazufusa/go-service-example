@@ -66,6 +66,7 @@ func installService(name, desc string) error {
 
 	// open port
 	// https://support.microsoft.com/ja-jp/help/947709/how-to-use-the-netsh-advfirewall-firewall-context-instead-of-the-netsh
+	// may be need `s := syscall.EscapeArg(exepath)`
 	for _, inout := range []string{"in"} {
 		err = exec.Command(
 			"netsh",
