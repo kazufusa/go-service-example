@@ -23,12 +23,13 @@ type myservice struct {
 func (m *myservice) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPauseAndContinue
 	changes <- svc.Status{State: svc.StartPending}
+	m.feature.Start()
 
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 	elog.Info(strings.Join(args, "-"))
 
 	ctx, cancel := context.WithCancel(context.Background())
-	chContinue, chPause := m.feature.Start(ctx)
+	defer cancel()
 
 loop:
 	for {
@@ -41,14 +42,14 @@ loop:
 				testOutput := strings.Join(args, "-")
 				testOutput += fmt.Sprintf("-%d", c.Context)
 				elog.Info(testOutput)
-				cancel()
+				m.feature.Shutdown(ctx)
 				break loop
 			case svc.Pause:
-				changes <- svc.Status{State: svc.Paused, Accepts: cmdsAccepted}
-				chPause <- struct{}{}
+				// changes <- svc.Status{State: svc.Paused, Accepts: cmdsAccepted}
+				elog.Warn("this application is not pausable and restartable")
 			case svc.Continue:
-				changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
-				chContinue <- struct{}{}
+				// changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
+				elog.Warn("this application is not pausable and restartable")
 			default:
 				elog.Error(fmt.Sprintf("unexpected control request #%d", c))
 			}

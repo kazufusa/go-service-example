@@ -2,42 +2,34 @@ package main
 
 import (
 	"context"
-	"time"
+	"fmt"
+	"net/http"
 
 	"github.com/kazufusa/go-service-example/llog"
 )
 
 type Feature struct {
-	elog *llog.Logger
+	elog   *llog.Logger
+	websrv *http.Server
 }
 
-func (f *Feature) Start(ctx context.Context) (chContinue, chPause chan struct{}) {
-	chContinue = make(chan struct{})
-	chPause = make(chan struct{})
+func handler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Hello, World")
+}
 
-	fasttick := time.Tick(500 * time.Millisecond)
-	slowtick := time.Tick(2 * time.Second)
-	tick := fasttick
-
+func (f *Feature) Start() {
+	f.websrv = &http.Server{Addr: ":80", Handler: http.HandlerFunc(handler)}
+	f.elog.Info("Start Web Server")
 	go func() {
-		defer func() {
-			close(chContinue)
-			close(chPause)
-		}()
-
-		for {
-			select {
-			case <-tick:
-				beep()
-				f.elog.Info("beep")
-			case <-chContinue:
-				tick = fasttick
-			case <-chPause:
-				tick = slowtick
-			case <-ctx.Done():
-				return
-			}
+		if err := f.websrv.ListenAndServe(); err != nil {
+			f.elog.Error(err)
 		}
 	}()
-	return chContinue, chPause
+}
+
+func (f *Feature) Shutdown(ctx context.Context) {
+	f.elog.Info("Shutdown Web Server")
+	if err := f.websrv.Shutdown(ctx); err != nil {
+		f.elog.Error(err)
+	}
 }

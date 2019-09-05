@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"golang.org/x/sys/windows/svc/eventlog"
@@ -62,6 +63,29 @@ func installService(name, desc string) error {
 		s.Delete()
 		return fmt.Errorf("SetupEventLogSource() failed: %s", err)
 	}
+
+	// open port
+	// https://support.microsoft.com/ja-jp/help/947709/how-to-use-the-netsh-advfirewall-firewall-context-instead-of-the-netsh
+	for _, inout := range []string{"in"} {
+		err = exec.Command(
+			"netsh",
+			"advfirewall",
+			"firewall",
+			"add",
+			"rule",
+			fmt.Sprintf("name=\"%s-%s\"", name, inout),
+			fmt.Sprintf("dir=%s", inout),
+			"action=allow",
+			fmt.Sprintf("program=\"%s\"", exepath),
+			"protocol=TCP",
+			"localport=80",
+			"enable=yes",
+		).Run()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -84,5 +108,21 @@ func removeService(name string) error {
 	if err != nil {
 		return fmt.Errorf("RemoveEventLogSource() failed: %s", err)
 	}
+
+	// close port
+	for _, inout := range []string{"in"} {
+		err = exec.Command(
+			"netsh",
+			"advfirewall",
+			"firewall",
+			"delete",
+			"rule",
+			fmt.Sprintf("name=\"%s-%s\"", name, inout),
+		).Run()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }

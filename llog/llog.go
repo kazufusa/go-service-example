@@ -75,22 +75,22 @@ func (l *Logger) output(lv Level, s string) error {
 	return err
 }
 
-func (l *Logger) Debug(s string) {
-	l.output(DEBUG, s)
+func (l *Logger) Debug(s interface{}) {
+	l.output(DEBUG, fmt.Sprint(s))
 }
 
-func (l *Logger) Info(s string) {
-	l.output(INFO, s)
+func (l *Logger) Info(s interface{}) {
+	l.output(INFO, fmt.Sprint(s))
 }
 
-func (l *Logger) Warn(s string) {
-	l.output(WARN, s)
+func (l *Logger) Warn(s interface{}) {
+	l.output(WARN, fmt.Sprint(s))
 }
 
-func (l *Logger) Error(s string) {
-	l.output(ERROR, s)
+func (l *Logger) Error(s interface{}) {
+	l.output(ERROR, fmt.Sprint(s))
 }
 
-func (l *Logger) FATAL(s string) {
-	l.output(FATAL, s)
+func (l *Logger) FATAL(s interface{}) {
+	l.output(FATAL, fmt.Sprint(s))
 }
