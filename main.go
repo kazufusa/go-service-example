@@ -3,13 +3,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/debug"
 	"golang.org/x/sys/windows/svc/eventlog"
+	"golang.org/x/sys/windows/svc/mgr"
 )
 
 func usage(errmsg string) {
@@ -22,79 +28,231 @@ func usage(errmsg string) {
 	os.Exit(2)
 }
 
-type Service struct {
-	name    string
-	logger  *log.Logger
+type service struct {
 	feature IFeature
+	logger  *log.Logger
 }
 
-var IsIntSess = true
+func (s *service) Execute(
+	args []string,
+	r <-chan svc.ChangeRequest,
+	changes chan<- svc.Status,
+) (ssec bool, errno uint32) {
+	s.logger.Printf("[Info] argument is : %s", strings.Join(args, "-"))
+
+	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPauseAndContinue
+	changes <- svc.Status{State: svc.StartPending}
+
+	s.feature.Start()
+	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
+
+loop:
+	for {
+		select {
+		case c := <-r:
+			switch c.Cmd {
+			case svc.Interrogate:
+				changes <- c.CurrentStatus
+			case svc.Stop, svc.Shutdown:
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				s.feature.Shutdown(ctx)
+				break loop
+			case svc.Pause:
+				// changes <- svc.Status{State: svc.Paused, Accepts: cmdsAccepted}
+				s.logger.Println("[Warn] this application is not pausable and restartable")
+			case svc.Continue:
+				// changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
+				s.logger.Println("[Warn] this application is not pausable and restartable")
+			default:
+				s.logger.Printf("[Error] unexpected control request #%d\n", c)
+			}
+		}
+	}
+	changes <- svc.Status{State: svc.StopPending}
+	return
+}
+
+var _ svc.Handler = (*service)(nil)
+
+type ServiceManager struct {
+	Name    string
+	Desc    string
+	Logger  *log.Logger
+	eId     uint32
+	service *service
+}
+
+var isIntSess = true
 
 func init() {
 	var err error
-	IsIntSess, err = svc.IsAnInteractiveSession()
+	isIntSess, err = svc.IsAnInteractiveSession()
 
 	if err != nil {
 		panic(err)
 	}
 }
 
-type EventLogWriter struct {
-	el  *eventlog.Log
-	eId uint32
+func IsIntSess() bool {
+	return isIntSess
 }
 
-func NewEventLogWriter(svcname string, eId uint32) (*EventLogWriter, error) {
-	el, err := eventlog.Open(svcname)
+func (sm *ServiceManager) run(isDebug bool) {
+	sm.Logger.Printf("[Info] starting %s service", sm.Name)
+	run := debug.Run
+	if !isDebug {
+		run = svc.Run
+	}
+	w1, err := NewEventLogWriter(sm.Name, sm.eId)
 	if err != nil {
-		return nil, err
+		sm.Logger.Printf("[Error] %s service logger initialization failed: %v", sm.Name, err)
+		return
 	}
-	return &EventLogWriter{el: el, eId: eId}, nil
-}
-
-func (elw *EventLogWriter) Close() error {
-	return elw.el.Close()
-}
-
-func (elw *EventLogWriter) Write(p []byte) (n int, err error) {
-	s := string(p)
-	if strings.Contains(s, "[Info]") {
-		err = elw.el.Info(elw.eId, s)
-	} else if strings.Contains(s, "[Warn]") {
-		err = elw.el.Warning(elw.eId, s)
-	} else if strings.Contains(s, "[Error]") {
-		err = elw.el.Error(elw.eId, s)
+	defer w1.Close()
+	log.SetOutput(io.MultiWriter(w1, defaultLogWriter()))
+	err = run(sm.Name, sm.service)
+	if err != nil {
+		sm.Logger.Printf("[Error] %s service failed: %v", sm.Name, err)
+		return
 	}
-	return 0, err
+	sm.Logger.Printf("[Info] %s service stopped", sm.Name)
 }
 
-func (s *Service) Run() {}
+func (sm *ServiceManager) Run() {
+	sm.run(false)
+}
 
-func (s *Service) RunInInteractive() {}
+func (sm *ServiceManager) RunInInteractive() {
+	sm.run(true)
+}
 
-func (s *Service) Install() {}
+func (sm *ServiceManager) Install() error {
+	exepath, err := exePath()
+	if err != nil {
+		return err
+	}
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(sm.Name)
+	if err == nil {
+		s.Close()
+		return fmt.Errorf("service %s already exists", sm.Name)
+	}
+	s, err = m.CreateService(sm.Name, exepath, mgr.Config{DisplayName: sm.Desc}, "is", "auto-started")
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	err = eventlog.InstallAsEventCreate(sm.Name, eventlog.Error|eventlog.Warning|eventlog.Info)
+	if err != nil {
+		s.Delete()
+		return fmt.Errorf("SetupEventLogSource() failed: %s", err)
+	}
 
-func (s *Service) Uninstall() {}
+	// open port on firewall
+	for _, inout := range []string{"in"} {
+		err = exec.Command(
+			"netsh",
+			"advfirewall",
+			"firewall",
+			"add",
+			"rule",
+			fmt.Sprintf("name=\"%s-%s\"", sm.Name, inout),
+			fmt.Sprintf("dir=%s", inout),
+			"action=allow",
+			fmt.Sprintf("program=\"%s\"", exepath),
+			"protocol=TCP",
+			"localport=80",
+			"enable=yes",
+		).Run()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-func (s *Service) Start() {}
+func (sm *ServiceManager) Uninstall() error {
 
-func (s *Service) Stop() {}
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(sm.Name)
+	if err != nil {
+		return fmt.Errorf("service %s is not installed", sm.Name)
+	}
+	defer s.Close()
+	err = s.Delete()
+	if err != nil {
+		return err
+	}
+	err = eventlog.Remove(sm.Name)
+	if err != nil {
+		return fmt.Errorf("RemoveEventLogSource() failed: %s", err)
+	}
 
-func (s *Service) Pause() {}
+	// close port on firewall
+	for _, inout := range []string{"in"} {
+		err = exec.Command(
+			"netsh",
+			"advfirewall",
+			"firewall",
+			"delete",
+			"rule",
+			fmt.Sprintf("name=\"%s-%s\"", sm.Name, inout),
+		).Run()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-func (s *Service) Continue() {}
+func (sm *ServiceManager) Start() error {
+	return startService(sm.Name)
+}
+
+func (sm *ServiceManager) Stop() error {
+	return controlService(sm.Name, svc.Stop, svc.Stopped)
+}
+
+func (sm *ServiceManager) Pause() error {
+	return controlService(sm.Name, svc.Pause, svc.Paused)
+}
+
+func (sm *ServiceManager) Continue() error {
+	return controlService(sm.Name, svc.Continue, svc.Running)
+}
 
 func main() {
-	const svcName = "myservice"
+	var err error
+	const (
+		svcName = "myservice"
+		svcDesc = "my service"
+		eId     = 1
+	)
 
-	// is service?
-	isIntSess, err := svc.IsAnInteractiveSession()
-	if err != nil {
-		log.Fatalf("failed to determine if we are running in an interactive session: %v", err)
+	logger := log.New(defaultLogWriter(), "", log.LstdFlags|log.Lshortfile)
+	sm := ServiceManager{
+		Name:   svcName,
+		Desc:   svcDesc,
+		Logger: logger,
+		eId:    eId,
+		service: &service{
+			feature: &Feature{
+				logger: logger,
+			},
+			logger: logger},
 	}
-	if !isIntSess {
-		// is service
-		runService(svcName, false)
+
+	if !IsIntSess() {
+		sm.Run()
 		return
 	}
 
@@ -104,20 +262,20 @@ func main() {
 	cmd := strings.ToLower(os.Args[1])
 	switch cmd {
 	case "debug":
-		runService(svcName, true)
+		sm.RunInInteractive()
 		return
 	case "install":
-		err = installService(svcName, "my service")
-	case "remove":
-		err = removeService(svcName)
+		err = sm.Install()
+	case "uninstall":
+		err = sm.Uninstall()
 	case "start":
-		err = startService(svcName)
+		err = sm.Start()
 	case "stop":
-		err = controlService(svcName, svc.Stop, svc.Stopped)
+		err = sm.Stop()
 	case "pause":
-		err = controlService(svcName, svc.Pause, svc.Paused)
+		err = sm.Pause()
 	case "continue":
-		err = controlService(svcName, svc.Continue, svc.Running)
+		err = sm.Continue()
 	default:
 		usage(fmt.Sprintf("invalid command %s", cmd))
 	}

@@ -3,13 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
-
-	"github.com/kazufusa/go-service-example/llog"
 )
 
 type Feature struct {
-	elog   *llog.Logger
+	logger *log.Logger
 	websrv *http.Server
 }
 
@@ -26,17 +25,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 func (f *Feature) Start() {
 	f.websrv = &http.Server{Addr: ":80", Handler: http.HandlerFunc(handler)}
-	f.elog.Info("Start Web Server")
+	f.logger.Println("[Info] Start Web Server")
 	go func() {
 		if err := f.websrv.ListenAndServe(); err != nil {
-			f.elog.Error(err)
+			f.logger.Printf("[Error] %s\n", err)
 		}
 	}()
 }
 
 func (f *Feature) Shutdown(ctx context.Context) {
-	f.elog.Info("Shutdown Web Server")
+	f.logger.Println("[Info] Shutdown Web Server")
 	if err := f.websrv.Shutdown(ctx); err != nil {
-		f.elog.Error(err)
+		f.logger.Printf("[Error] %s\n", err)
 	}
 }
