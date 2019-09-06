@@ -28,24 +28,40 @@ func (elw *EventLogWriter) Close() error {
 
 func (elw *EventLogWriter) Write(p []byte) (n int, err error) {
 	s := string(p)
-	if strings.Contains(s, "[Info]") {
+	if strings.Contains(s, "[INFO]") {
 		err = elw.el.Info(elw.eId, s)
-	} else if strings.Contains(s, "[Warn]") {
+	} else if strings.Contains(s, "[WARN]") {
 		err = elw.el.Warning(elw.eId, s)
-	} else if strings.Contains(s, "[Error]") {
+	} else if strings.Contains(s, "[ERROR]") {
 		err = elw.el.Error(elw.eId, s)
 	}
 	return 0, err
 }
 
-func defaultLogWriter() io.Writer {
-	return io.MultiWriter(
-		&lumberjack.Logger{
-			Filename:   "C:/Users/user/Desktop/work/aaaa.log",
-			MaxSize:    500, // megabytes
-			MaxBackups: 3,
-			MaxAge:     28, //days
-		},
-		os.Stdout,
-	)
+type DefaultLogWriter struct {
+	w           io.Writer
+	shouldClose io.WriteCloser
+}
+
+func (d DefaultLogWriter) Write(p []byte) (n int, err error) {
+	return d.w.Write(p)
+}
+
+func (d DefaultLogWriter) Close() error {
+	return d.shouldClose.Close()
+}
+
+func NewDefaultLogWriter(path string) DefaultLogWriter {
+	shouldClose := &lumberjack.Logger{
+		Filename:   path,
+		MaxSize:    10, // megabytes
+		MaxBackups: 3,
+		MaxAge:     1500, //days
+		Compress:   true,
+	}
+
+	return DefaultLogWriter{
+		w:           io.MultiWriter(shouldClose, os.Stdout),
+		shouldClose: shouldClose,
+	}
 }

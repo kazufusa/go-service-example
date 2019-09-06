@@ -38,7 +38,7 @@ func (s *service) Execute(
 	r <-chan svc.ChangeRequest,
 	changes chan<- svc.Status,
 ) (ssec bool, errno uint32) {
-	s.logger.Printf("[Info] argument is : %s", strings.Join(args, "-"))
+	s.logger.Printf("[INFO] argument is : %s", strings.Join(args, "-"))
 
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown | svc.AcceptPauseAndContinue
 	changes <- svc.Status{State: svc.StartPending}
@@ -60,12 +60,12 @@ loop:
 				break loop
 			case svc.Pause:
 				// changes <- svc.Status{State: svc.Paused, Accepts: cmdsAccepted}
-				s.logger.Println("[Warn] this application is not pausable and restartable")
+				s.logger.Println("[WARN] this application is not pausable and restartable")
 			case svc.Continue:
 				// changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
-				s.logger.Println("[Warn] this application is not pausable and restartable")
+				s.logger.Println("[WARN] this application is not pausable and restartable")
 			default:
-				s.logger.Printf("[Error] unexpected control request #%d\n", c)
+				s.logger.Printf("[ERROR] unexpected control request #%d\n", c)
 			}
 		}
 	}
@@ -76,19 +76,30 @@ loop:
 var _ svc.Handler = (*service)(nil)
 
 type ServiceManager struct {
-	Name    string
-	Desc    string
-	Logger  *log.Logger
-	eId     uint32
-	service *service
+	Name      string
+	Desc      string
+	Logger    *log.Logger
+	eId       uint32
+	service   *service
+	exePath   string
+	logPath   string
+	logWriter io.Writer
 }
 
-var isIntSess = true
+var (
+	isIntSess = true
+	exepath   = ""
+)
 
 func init() {
 	var err error
 	isIntSess, err = svc.IsAnInteractiveSession()
 
+	if err != nil {
+		panic(err)
+	}
+
+	exepath, err = exePath()
 	if err != nil {
 		panic(err)
 	}
@@ -110,7 +121,8 @@ func (sm *ServiceManager) run(isDebug bool) {
 		return
 	}
 	defer w1.Close()
-	log.SetOutput(io.MultiWriter(w1, defaultLogWriter()))
+
+	log.SetOutput(io.MultiWriter(w1, sm.logWriter))
 	err = run(sm.Name, sm.service)
 	if err != nil {
 		sm.Logger.Printf("[Error] %s service failed: %v", sm.Name, err)
@@ -128,10 +140,6 @@ func (sm *ServiceManager) RunInInteractive() {
 }
 
 func (sm *ServiceManager) Install() error {
-	exepath, err := exePath()
-	if err != nil {
-		return err
-	}
 	m, err := mgr.Connect()
 	if err != nil {
 		return err
@@ -238,12 +246,18 @@ func main() {
 		eId     = 1
 	)
 
-	logger := log.New(defaultLogWriter(), "", log.LstdFlags|log.Lshortfile)
+	lw := NewDefaultLogWriter(exepath + ".log")
+	defer lw.Close()
+
+	logger := log.New(lw, "", log.LstdFlags|log.Lshortfile)
 	sm := ServiceManager{
-		Name:   svcName,
-		Desc:   svcDesc,
-		Logger: logger,
-		eId:    eId,
+		Name:      svcName,
+		Desc:      svcDesc,
+		Logger:    logger,
+		eId:       eId,
+		exePath:   exepath,
+		logPath:   exepath + ".log",
+		logWriter: lw,
 		service: &service{
 			feature: &Feature{
 				logger: logger,

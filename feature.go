@@ -25,17 +25,18 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 func (f *Feature) Start() {
 	f.websrv = &http.Server{Addr: ":80", Handler: http.HandlerFunc(handler)}
-	f.logger.Println("[Info] Start Web Server")
+	f.logger.Println("[INFO] Start Web Server")
 	go func() {
 		if err := f.websrv.ListenAndServe(); err != nil {
-			f.logger.Printf("[Error] %s\n", err)
+			f.logger.Printf("[ERROR] failed web server start %#+v\n", err)
 		}
 	}()
+	f.logger.Printf("[ERROR] failed web server start %#+v\n", nil)
 }
 
 func (f *Feature) Shutdown(ctx context.Context) {
-	f.logger.Println("[Info] Shutdown Web Server")
+	f.logger.Println("[INFO] Shutdown Web Server")
 	if err := f.websrv.Shutdown(ctx); err != nil {
-		f.logger.Printf("[Error] %s\n", err)
+		f.logger.Printf("[ERROR] failed gracefull shutdown: %#+v\n", err)
 	}
 }
